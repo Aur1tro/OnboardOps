@@ -368,29 +368,5 @@ sudo rm -rf /shared
 | `provision.sh` | The provisioning script |
 | `verification_output.txt` | Full command output, in nine sections, captured from the live VM |
 | `commands.txt` | The commands typed directly during development and testing |
-| `screenshots/` | Terminal screenshots supporting the text evidence |
 
----
 
-## Limitations / Assumptions
-
-- The initial password is stored in plain text inside `provision.sh`. This is
-  acceptable for a lab exercise because `chage -d 0` makes it valid for a
-  single login, but a production version would read it from a protected file
-  or generate a random password per user.
-- Rerunning the script resets all three passwords and therefore re-triggers the
-  forced change at next login. This is intentional but worth knowing before
-  running it a second time on a live system.
-- `provision.sh` does not remove anything. Cleanup is manual and documented
-  above.
-- The script assumes the default RHEL behaviour of creating home directories
-  under `/home`, and assumes `/etc/skel` provides a `.bashrc` for the umask
-  line to be appended to. Both are true on a standard RHEL 10 installation.
-- SELinux was left in its default enforcing mode. `/shared` is a
-  non-standard location, but since no confined service accesses it, no context
-  changes were needed. A web server or similar daemon reading from this
-  directory would require an SELinux context change, which is covered in RH134
-  rather than RH124.
-- Tested on a single RHEL 10 VM. Behaviour on a system using centralised
-  identity management such as LDAP or FreeIPA would differ, since local
-  `/etc/passwd` and `/etc/group` would no longer be authoritative.
