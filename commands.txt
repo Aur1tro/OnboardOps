@@ -1,0 +1,190 @@
+OnboardOps - Project Command Log
+
+This file records the commands I typed directly at the shell while building, running and testing the project. The commands that make up the provisioning itself live inside provision.sh and are not repeated here.
+
+1. Checking the starting state
+
+Before writing anything I confirmed that none of the objects the project creates already existed so that the script could be shown to build everything from scratch as per the requirement .
+
+$ id dev1
+$ id dev2
+$ id dev3
+$ grep devteam /etc/group
+$ ls -ld /shared
+$ sudo ls -l /etc/sudoers.d/
+
+2. Writing and running the script
+
+$ mkdir OnboardOps
+$ cd OnboardOps/
+$ ls
+$ nano provision.sh
+
+!/bin/bash
+
+GROUP="devteam"
+USERS=(dev1 dev2 dev3)
+ADMIN="dev1"
+INITIAL_PASSWORD="redhat@2345"
+SHARED_DIR="/shared/project"
+SUDOERS_FILE="/etc/sudoers.d/devteam-admin"
+MAX_AGE=60
+WARN_AGE=7
+TEAM_UMASK="007"
+
+if [ "$(id -u)" -ne 0 ]; then
+    echo "This script must be run as root. Try: sudo $0" >&2
+    exit 1
+fi
+
+if grep -q "^${GROUP}:" /etc/group; then
+    echo "Group ${GROUP} already exists."
+else
+    groupadd "$GROUP"
+    echo "Created group ${GROUP}."
+fi
+
+for user in "${USERS[@]}"; do
+
+    if id "$user" &> /dev/null; then
+        usermod -aG "$GROUP" -s /bin/bash "$user"
+        echo "User ${user} already exists; group and shell refreshed."
+    else
+        useradd -G "$GROUP" -s /bin/bash "$user"
+        echo "Created user ${user}."
+    fi
+
+    echo "${user}:${INITIAL_PASSWORD}" | chpasswd
+    chage -M "$MAX_AGE" -W "$WARN_AGE" "$user"
+    chage -d 0 "$user"
+
+    if ! grep -q "^umask ${TEAM_UMASK}$" "/home/${user}/.bashrc"; then
+        echo "umask ${TEAM_UMASK}" >> "/home/${user}/.bashrc"
+    fi
+
+done
+
+echo "${ADMIN} ALL=(ALL) ALL" > "$SUDOERS_FILE"
+chmod 0440 "$SUDOERS_FILE"
+
+if ! visudo -cf "$SUDOERS_FILE" > /dev/null; then
+    rm -f "$SUDOERS_FILE"
+    echo "Invalid sudoers syntax; drop-in removed and no changes applied." >&2
+    exit 1
+fi
+
+echo "Granted full sudo privileges to ${ADMIN}."
+
+
+mkdir -p "$SHARED_DIR"
+chown root:"$GROUP" "$SHARED_DIR"
+chmod 3770 "$SHARED_DIR"
+
+echo "Configured shared workspace at ${SHARED_DIR}."
+
+$ chmod +x provision.sh
+$ sudo ./provision.sh
+
+3. Verifying users and groups
+
+$ id dev1
+$ id dev2
+$ id dev3
+$ grep dev /etc/passwd
+$ grep devteam /etc/group
+$ ls -ld /home/dev1 /home/dev2 /home/dev3
+
+4. Verifying the password policy
+
+My first attempt failed because chage reads /etc/shadow, which only
+root can open. Rerunning with sudo worked.
+
+$ chage -l dev1
+chage: Permission denied.
+$ chage -l dev2
+$ chage -l dev3
+
+$ sudo chage -l dev1
+$ sudo chage -l dev2
+$ sudo chage -l dev3
+
+5. Verifying the sudo configuration
+
+$ sudo cat /etc/sudoers.d/devteam-admin
+$ sudo ls -l /etc/sudoers.d/devteam-admin
+
+6. Verifying the shared directory
+
+$ ls -ld /shared/project
+
+7. Testing as dev1 (owner and administrator)
+
+The first login prompted for a password change which is the forced change configured by chage -d 0.
+
+$ su - dev1
+$ id
+$ umask
+$ sudo -l
+$ sudo tail -3 /var/log/secure
+$ cd /shared/project
+$ touch dev1_notes.txt
+$ echo "created by dev1" > dev1_notes.txt
+$ mkdir dev1_work
+$ ls -l
+$ ls -ld dev1_work
+$ exit
+
+8. Testing as dev2 (collaborator, no sudo access)
+
+Checked three separate things here: that sudo is refused, that dev2 can edit a file dev1 created, and that dev2 cannot delete it. The last two commands recreate dev2_notes.txt so the next user has someone else's file to try deleting.
+
+$ su - dev2
+$ id
+$ umask
+$ sudo -l
+$ tail -3 /var/log/secure
+$ cd /shared/project
+$ cat dev1_notes.txt
+$ echo "reviewed by dev2" >> dev1_notes.txt
+$ cat dev1_notes.txt
+$ rm dev1_notes.txt
+$ touch dev2_notes.txt
+$ ls -l
+$ rm dev2_notes.txt
+$ ls -l
+$ touch dev2_notes.txt
+$ exit
+
+9. Testing as dev3 (third user, no sudo)
+
+My first attempt failed because I mistyped the current password at
+the forced-change prompt. I logged in again and it succeeded.
+
+$ su - dev3
+Password:
+You are required to change your password immediately (administrator enforced).
+Current password:
+su: Authentication token manipulation error
+
+$ su - dev3
+$ id
+$ sudo -l
+$ cd /shared/project
+$ ls -l
+$ rm dev2_notes.txt
+$ touch dev3_notes.txt
+$ ls -l
+$ exit
+
+10. Testing as a user outside the group
+
+My own account is not a member of devteam so it should have no access to the shared directory at all.
+
+$ id
+$ cd /shared/project
+$ ls /shared/project
+
+11. Final state check
+
+$ sudo ls -l /shared/project
+$ sudo ls -ld /shared/project
